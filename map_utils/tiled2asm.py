@@ -6,8 +6,10 @@ import math
 import csv
 import copy
 
-if (len(sys.argv)<4):
-  print("Synthax: python3 tiled2asm.py tiles_file.xml first_map_tile_index mapname")
+sys.argv = ('tiled2asm.py', '/home/roa/prog/infos_SMS/asm/badmin/art/floor01.tmx', '0', 'court', '6')
+
+if (len(sys.argv)<5):
+  print("Synthax: python3 tiled2asm.py tiles_file.xml first_map_tile_index mapname screens_offset")
   exit()
 
 class Layer(object):
@@ -25,12 +27,12 @@ class Layer(object):
             print("ERROR!! layer data must be in CSV")
             self.data=0
         else:
-            datacsv=xmlelement.getchildren()[0].text
+            datacsv=xmlelement.getchildren()[0].text[:-1] + ','
             datareader=csv.reader(datacsv.split('\n'), delimiter=',')
             self.data=[]
             for row in datareader:
                 self.data.append([int(v) for v in row[:-1]])
-            self.data=self.data[1:-1]
+            self.data=self.data[1:]
     def make_layer_bit(self,bit,name):
         if (self.firstgid==-1):
             print("Error! Call Layer::get_firstgid before Layer::make_layer_bit!")
@@ -64,6 +66,9 @@ class Layer(object):
 filename=sys.argv[1]
 first_map_tile_index=int(sys.argv[2])
 mapname=sys.argv[3]
+screens_offset=int(sys.argv[4])
+if screens_offset==0 :
+    screens_offset = 32
 print("first_map_tile_index=",first_map_tile_index)
 
 e = xml.etree.ElementTree.parse(filename).getroot()
@@ -88,15 +93,19 @@ for xmllayer in e.findall("layer"):
 #~ print(layer_foreground.data)
 
 for xmltileset in e.findall("tileset"):
-    for (tag,val) in xmltileset.items():
-        if (tag=="name"):
+    for tag in xmltileset.attrib:
+        layer_level.firstgid=int(xmltileset.attrib['firstgid'])
+        """if (tag=="name"):
             if (val=="collisions"):
                 layer_collision.get_firstgid(xmltileset)
             elif (val=="foreground"):
                 layer_foreground.get_firstgid(xmltileset)
             else:
-                layer_level.get_firstgid(xmltileset)
+                layer_level.get_firstgid(xmltileset)"""
 
+if layer_level==None:
+    print('Error: no layer named "level"')
+    exit()
 
 #~ print(layer_foreground.data)
 #~ print(layer_level.toStr())
@@ -122,7 +131,7 @@ layer_level.remove_high_bits(10)
 #~ print(layer_collision.data)
 
 
-#make sure there is no hflip and v filp at the same time
+#make sure there is no hflip and v flip at the same time
 flip_ok=True
 for y in range(len(layer_level.data_bit["vflip"])):
     for x in range(len(layer_level.data_bit["vflip"][y])):
@@ -154,19 +163,31 @@ print(len(layer_level.data_bit["vflip"]),len(layer_level.data_bit["vflip"][0]))
 for y in range(len(layer_level.data)):
     for x in range(len(layer_level.data[y])):
         merged_layer.data[y][x]= \
-            layer_level.data[y][x] \
+            layer_level.data[y][x] - layer_level.firstgid \
             +(layer_level.data_bit["vflip"][y][x])*(2**10) \
             +(layer_level.data_bit["hflip"][y][x])*(2**9) \
-            +(layer_collision.data[y][x])*(2**13) \
-            +(layer_foreground.data[y][x])*(2**12)
+            #+(layer_collision.data[y][x])*(2**13) \
+            #+(layer_foreground.data[y][x])*(2**12)
 
-#cut it in screens (32 tiles width)
+#cut it in screens (32 tiles width), with screens_offset
+# 1st screen is screens_offset, next are 32
 all_screens=[]
-for i in range(int(merged_layer.width/32)):
-    all_screens.append([])
-    for y in range(merged_layer.height):
-        all_screens[i].append(merged_layer.data[y][i*32:(i+1)*32])
+nb_screens = 1 + math.ceil((merged_layer.width-screens_offset)/32)
+screens_x_start_stop = [ [0,screens_offset-1] ]
+x = screens_offset
+for i in range(1,nb_screens):
+    screens_x_start_stop.append( [x, x+31] )
+    x = x + 32
+# fix last screen (may not be full)
+screens_x_start_stop[-1][-1] = merged_layer.width - 1
 
+for i in range(nb_screens):
+    all_screens.append([])
+    x_start, x_stop = screens_x_start_stop[i]
+    for y in range(merged_layer.height):
+        all_screens[i].append(merged_layer.data[y][x_start:x_stop+1])
+
+print("%s_TilemapStart:"%(mapname))
 for i,screen in enumerate(all_screens):
     print("%s_scr_%02d_TilemapStart:"%(mapname,i))
     for row in screen:
@@ -175,7 +196,7 @@ for i,screen in enumerate(all_screens):
       for val in row:
         j+=1
         #str+=' $%04x'%(val-1)
-        str+=" %{0:016b}".format(val)
+        str+=" %{0:016b}".format(val+first_map_tile_index)
         #if (j==8)or(j==16)or(j==24):
         #  str+="\n.dw"
         #if (j==32):
@@ -185,8 +206,9 @@ for i,screen in enumerate(all_screens):
         elif (j%8==0):
           str+="\n.dw"
       print(str)
-    print("_TilemapEnd:")
+    print("%s_scr_%02d_TilemapEnd:"%(mapname,i))
 
+print("%s_TilemapEnd:"%(mapname))
 
 #~ print("_TilemapStart:")
 #~ for row in merged_layer.data:
